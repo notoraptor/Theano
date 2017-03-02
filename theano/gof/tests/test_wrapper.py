@@ -120,6 +120,11 @@ class QuadraticCOpFunc(COp):
         x = tensor.as_tensor_variable(x)
         return Apply(self, [x], [x.type()])
 
+    def perform(self, node, inputs, output_storage, coefficients):
+        x = inputs[0]
+        y = output_storage[0]
+        y[0] = coefficients.a * (x**2) + coefficients.b * x + coefficients.c
+
 
 class TestWrapper(TestCase):
 
