@@ -1,3 +1,4 @@
+from __future__ import print_function, absolute_import, division
 import re
 import theano
 from theano.gof import Type, Wrapper
@@ -180,6 +181,9 @@ class CArrayType(Wrapper):
 
     def values_eq_approx(self, a, b):
         return self.carrayfromtuple.values_eq_approx(a, b)
+
+    def c_code_cache_version(self):
+        return (self.carrayfromtuple.c_code_cache_version(), Wrapper.c_code_cache_version(self))
 
     def c_support_code(self):
         return self.carrayfromtuple.c_support_code() + Wrapper.c_support_code(self)
