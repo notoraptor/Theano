@@ -5,7 +5,8 @@ import theano
 
 
 class FracSum(Op):
-    params_type = CArrayType('double')
+    __props__ = ('fractions',)
+    params_type = CArrayType('long double')
 
     def __init__(self, fractions):
         assert isinstance(fractions, (list, tuple))
@@ -30,8 +31,34 @@ class FracSum(Op):
         }
         """ % dict(y=outputs[0], fractions=sub['params'], a=inputs[0])
 
+    def c_code_cache_version(self):
+        return (1,)
 
-def test_carray():
+
+def test_carraytypes():
+    # test invalid type
+    try:
+        CArrayType('000type')
+    except TypeError:
+        pass
+    else:
+        raise Exception('CArrayType with invalid type should fail.')
+
+    c1 = CArrayType('unsigned long long int')
+    c2 = CArrayType('unsigned       long   long        int')
+
+    # test CArrayFromTuple
+    assert c1.carrayfromtuple == c2.carrayfromtuple
+    assert not (c1.carrayfromtuple != c2.carrayfromtuple)
+    assert hash(c1.carrayfromtuple) == hash(c2.carrayfromtuple)
+
+    # test CArrayType
+    assert c1 == c2
+    assert not (c1 != c2)
+    assert hash(c1) == hash(c2)
+
+
+def test_carray_as_op_param():
     fractions = (1, 2, 3, 4, 5)
     a = scalar.int32()
     y = FracSum(fractions)(a)
