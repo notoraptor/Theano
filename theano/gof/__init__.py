@@ -81,6 +81,7 @@ from theano.gof.utils import \
     hashtype, object2, MethodNotDefined
 
 from theano.gof.wrapper import Wrapper, Wrap
+from theano.gof.carray import CArrayType
 
 import theano
 
