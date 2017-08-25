@@ -660,7 +660,7 @@ class CDataType(Type):
                  'compile_args', 'version')
 
     def __init__(self, ctype, freefunc=None, headers=(), header_dirs=(),
-                 libraries=(), lib_dirs=(), compile_args=(),
+                 libraries=(), lib_dirs=(), compile_args=(), rpaths=(),
                  extra_support_code="", version=None):
         assert isinstance(ctype, string_types)
         self.ctype = ctype
@@ -672,6 +672,7 @@ class CDataType(Type):
         self.libraries = tuple(libraries)
         self.lib_dirs = tuple(lib_dirs)
         self.compile_args = tuple(compile_args)
+        self.rpaths = tuple(rpaths)
         self.extra_support_code = extra_support_code
         self._fn = None
         self.version = None
@@ -778,6 +779,9 @@ if (py_%(name)s == NULL) { %(freefunc)s(%(name)s); }
 
     def c_lib_dirs(self):
         return self.lib_dirs
+
+    def c_rpaths(self):
+        return self.rpaths
 
     def c_compile_args(self):
         return self.compile_args

@@ -230,9 +230,9 @@ dnn_available.msg = None
 
 
 def CUDNNDataType(name, freefunc=None):
-    cargs = []
-    if config.dnn.bin_path and sys.platform != 'win32':
-        cargs.append('-Wl,-rpath,' + config.dnn.bin_path)
+    rpaths = []
+    if config.dnn.bin_path:
+        rpaths.append(config.dnn.bin_path)
 
     return CDataType(name, freefunc,
                      headers=['cudnn.h'],
@@ -240,7 +240,7 @@ def CUDNNDataType(name, freefunc=None):
                                   config.cuda.include_path],
                      libraries=['cudnn'],
                      lib_dirs=[config.dnn.library_path],
-                     compile_args=cargs,
+                     rpaths=rpaths,
                      version=version(raises=False))
 
 
@@ -259,9 +259,9 @@ class DnnVersion(Op):
     def c_lib_dirs(self):
         return [config.dnn.library_path]
 
-    def c_compile_args(self):
-        if config.dnn.bin_path and sys.platform != 'win32':
-            return ['-Wl,-rpath,' + config.dnn.bin_path]
+    def c_rpaths(self):
+        if config.dnn.bin_path:
+            return [config.dnn.bin_path]
         return []
 
     def c_support_code(self):
@@ -388,9 +388,9 @@ class DnnBase(COp):
     def c_lib_dirs(self):
         return [config.dnn.library_path]
 
-    def c_compile_args(self):
-        if config.dnn.bin_path and sys.platform != 'win32':
-            return ['-Wl,-rpath,' + config.dnn.bin_path]
+    def c_rpaths(self):
+        if config.dnn.bin_path:
+            return [config.dnn.bin_path]
         return []
 
     def c_code_cache_version(self):
@@ -433,9 +433,9 @@ class GpuDnnConvDesc(COp):
     def c_lib_dirs(self):
         return [config.dnn.library_path]
 
-    def c_compile_args(self):
-        if config.dnn.bin_path and sys.platform != 'win32':
-            return ['-Wl,-rpath,' + config.dnn.bin_path]
+    def c_rpaths(self):
+        if config.dnn.bin_path:
+            return [config.dnn.bin_path]
         return []
 
     def do_constant_folding(self, node):
