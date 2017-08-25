@@ -958,6 +958,7 @@ class CLinker(link.Linker):
                 ]
 
         c_compiler = self.c_compiler()
+        rpaths = []
 
         for x in [y.type for y in self.variables] + [
                 y.op for y in self.node_order]:
@@ -968,6 +969,14 @@ class CLinker(link.Linker):
                     ret += x.c_compile_args()
             except utils.MethodNotDefined:
                 pass
+
+            try:
+                rpaths.extend(x.c_rpaths())
+            except utils.MethodNotDefined:
+                pass
+
+        if sys.platform != 'win32':
+            ret += [('-Wl,-rpath,' + rpath) for rpath in rpaths]
 
         ret = utils.uniq(ret)  # to remove duplicate
         # The args set by the compiler include the user flags. We do not want

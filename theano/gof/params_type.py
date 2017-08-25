@@ -543,6 +543,15 @@ class ParamsType(Type):
                 pass
         return c_lib_dirs_list
 
+    def c_rpaths(self):
+        c_rpaths_list = []
+        for _type in self.types:
+            try:
+                c_rpaths_list.extend(_type.c_rpaths())
+            except MethodNotDefined:
+                pass
+        return c_rpaths_list
+
     def c_init_code(self):
         c_init_code_list = []
         for _type in self.types:

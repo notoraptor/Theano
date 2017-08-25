@@ -150,6 +150,27 @@ class CLinkerObject(object):
         raise utils.MethodNotDefined(
             "c_lib_dirs", type(self), self.__class__.__name__)
 
+    def c_rpaths(self):
+        """
+        Optional: Return a list of library paths required **at runtime**
+        after compilation of code returned by this class.
+
+        Examples
+        --------
+        return ['/usr/local/lib', '/opt/weirdpath/build/libs'].
+
+        Hint: for UNIX compilers, these are the things that get '-Wl,-rpath,' prefixed
+        in the compiler cmdline.
+
+        Raises
+        ------
+        MethodNotDefined
+            Subclass does not implement this method.
+
+        """
+        raise utils.MethodNotDefined(
+            "c_rpaths", type(self), self.__class__.__name__)
+
     def c_support_code(self):
         """
         Optional: Return utility code (a string, or a list of strings) for use by a `Variable` or `Op` to be
