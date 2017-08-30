@@ -501,6 +501,9 @@ class GpuMagmaBase(COp):
         dirs = [gpuarray_helper_inc_dir(), pygpu.get_include()]
         if config.magma.include_path:
             dirs.append(config.magma.include_path)
+        if config.cuda.include_path:
+            # Needed because of `<gpuarray/ext_cuda.h>`.
+            dirs.append(config.cuda.include_path)
         return dirs
 
     def c_libraries(self):
