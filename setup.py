@@ -54,10 +54,9 @@ MAJOR               = 0
 MINOR               = 10
 MICRO               = 0
 SUFFIX              = "beta1"  # Should be blank except for rc's, betas, etc.
-ISRELEASED          = False
 
 VERSION             = '%d.%d.%d%s' % (MAJOR, MINOR, MICRO, SUFFIX)
-
+ISRELEASED          = True if os.getenv('THEANO_VERSION', '') == VERSION else False
 
 def find_packages(where='.', exclude=()):
     out = []
