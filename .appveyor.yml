@@ -26,9 +26,11 @@ install:
 build: off
 
 test_script:
+  - cmd: for /f "tokens=*" %%i in ('python -c "import setup; print(setup.VERSION)"') do set THEANO_VERSION=%%i
+  - cmd: echo %THEANO_VERSION%
   - cmd: conda build conda
   - cmd: mkdir pkgs
-  - cmd: xcopy "%CONDA_LOC%"\conda-bld\win-64\theano* pkgs\ /Y
+  - cmd: xcopy "%CONDA_LOC%"\conda-bld\noarch\theano* pkgs\ /Y
 
 artifacts:
   - path: pkgs/*
