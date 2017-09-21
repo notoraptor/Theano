@@ -1,223 +1,229 @@
 from __future__ import absolute_import, print_function, division
-import unittest
 
 import numpy as np
 import theano
+import theano.ifelse
 from theano import tensor as T
 from theano import config
 from theano.tests import unittest_tools as utt
-from theano.gpuarray.tests.config import mode_with_gpu, mode_without_gpu
-from theano.tensor.nnet.spatialtf import spatialtf
-from theano.gpuarray.dnn import dnn_spatialtf
+from theano.tensor.nnet.spatialtf import spatialtf, TransformerGrid, TransformerSampler, TransformerGradI, \
+    TransformerGradT
+from theano.tensor.nnet.symbolic_spatialtf import theano_spatialtf
 
 
-def spatialtf_symb(inp, theta, scale_width, scale_height, border_mode='nearest'):
-    """
-    Symbolic Spatial Transformer implementation using Theano from Lasagne
-    Original author: skaae (https://github.com/skaae)
-    """
-    def _interpolate(im, x, y, out_height, out_width, border_mode):
-        # *_f are floats
-        num_batch, height, width, channels = im.shape
-        height_f = T.cast(height, theano.config.floatX)
-        width_f = T.cast(width, theano.config.floatX)
-
-        # scale coordinates from [-1, 1] to [0, dimension - 1], where dimension
-        # can be the width or height
-        x = (x + 1) / 2 * (width_f - 1)
-        y = (y + 1) / 2 * (height_f - 1)
-
-        # obtain indices of the 2x2 pixel neighborhood surrounding the coordinates;
-        # we need those in floatX for interpolation and in int64 for indexing.
-        x0_f = T.floor(x)
-        y0_f = T.floor(y)
-        x1_f = x0_f + 1
-        y1_f = y0_f + 1
-
-        # for indexing, we need to take care of the border mode for outside pixels.
-        if border_mode == 'nearest':
-            x0 = T.clip(x0_f, 0, width_f - 1)
-            x1 = T.clip(x1_f, 0, width_f - 1)
-            y0 = T.clip(y0_f, 0, height_f - 1)
-            y1 = T.clip(y1_f, 0, height_f - 1)
-        elif border_mode == 'mirror':
-            w = 2 * (width_f - 1)
-            x0 = T.minimum(x0_f % w, -x0_f % w)
-            x1 = T.minimum(x1_f % w, -x1_f % w)
-            h = 2 * (height_f - 1)
-            y0 = T.minimum(y0_f % h, -y0_f % h)
-            y1 = T.minimum(y1_f % h, -y1_f % h)
-        elif border_mode == 'wrap':
-            x0 = T.mod(x0_f, width_f)
-            x1 = T.mod(x1_f, width_f)
-            y0 = T.mod(y0_f, height_f)
-            y1 = T.mod(y1_f, height_f)
-        else:
-            raise ValueError("border_mode must be one of "
-                             "'nearest', 'mirror', 'wrap'")
-        x0, x1, y0, y1 = (T.cast(v, 'int64') for v in (x0, x1, y0, y1))
-
-        # The input is [num_batch, height, width, channels]. We do the lookup in
-        # the flattened input, i.e [num_batch*height*width, channels]. We need
-        # to offset all indices to match the flat version
-        dim2 = width
-        dim1 = width * height
-        base = T.repeat(
-            T.arange(num_batch, dtype='int64') * dim1, out_height * out_width)
-        base_y0 = base + y0 * dim2
-        base_y1 = base + y1 * dim2
-        idx_a = base_y0 + x0
-        idx_b = base_y1 + x0
-        idx_c = base_y0 + x1
-        idx_d = base_y1 + x1
-
-        # use indices to lookup pixels for all samples
-        im_flat = im.reshape((-1, channels))
-        Ia = im_flat[idx_a]
-        Ib = im_flat[idx_b]
-        Ic = im_flat[idx_c]
-        Id = im_flat[idx_d]
-
-        # calculate interpolated values
-        wa = ((x1_f - x) * (y1_f - y)).dimshuffle(0, 'x')
-        wb = ((x1_f - x) * (y - y0_f)).dimshuffle(0, 'x')
-        wc = ((x - x0_f) * (y1_f - y)).dimshuffle(0, 'x')
-        wd = ((x - x0_f) * (y - y0_f)).dimshuffle(0, 'x')
-        output = T.sum([wa * Ia, wb * Ib, wc * Ic, wd * Id], axis=0)
-        return output
-
-    def _linspace(start, stop, num):
-        # Theano linspace. Behaves similar to np.linspace
-        start = T.cast(start, theano.config.floatX)
-        stop = T.cast(stop, theano.config.floatX)
-        num = T.cast(num, theano.config.floatX)
-        step = (stop - start) / (num - 1)
-        return T.arange(num, dtype=theano.config.floatX) * step + start
-
-    def _meshgrid(height, width):
-        # This function is the grid generator from eq. (1) in reference [1].
-        # It is equivalent to the following numpy code:
-        #  x_t, y_t = np.meshgrid(np.linspace(-1, 1, width),
-        #                         np.linspace(-1, 1, height))
-        #  ones = np.ones(np.prod(x_t.shape))
-        #  grid = np.vstack([x_t.flatten(), y_t.flatten(), ones])
-        # It is implemented in Theano instead to support symbolic grid sizes.
-        # Note: If the image size is known at layer construction time, we could
-        # compute the meshgrid offline in numpy instead of doing it dynamically
-        # in Theano. However, it hardly affected performance when we tried.
-        x_t = T.dot(T.ones((height, 1)),
-                    _linspace(-1.0, 1.0, width).dimshuffle('x', 0))
-        y_t = T.dot(_linspace(-1.0, 1.0, height).dimshuffle(0, 'x'),
-                    T.ones((1, width)))
-
-        x_t_flat = x_t.reshape((1, -1))
-        y_t_flat = y_t.reshape((1, -1))
-        ones = T.ones_like(x_t_flat)
-        grid = T.concatenate([x_t_flat, y_t_flat, ones], axis=0)
-        return grid
-
-    num_batch, num_channels, height, width = inp.shape
-    theta = T.reshape(theta, (-1, 2, 3))
-
-    # grid of (x_t, y_t, 1), eq (1) in ref [1]
-    out_height = T.cast(T.ceil(height * scale_height), 'int64')
-    out_width = T.cast(T.ceil(width * scale_width), 'int64')
-    grid = _meshgrid(out_height, out_width)
-    # transform a x (x_t, y_t, 1)^t -> (x_s, y_s)
-    t_g = T.dot(theta, grid)
-    x_s = t_g[:, 0]
-    y_s = t_g[:, 1]
-    x_s_flat = x_s.flatten()
-    y_s_flat = y_s.flatten()
-
-    # dimshuffle input to  (bs, height, width, channels)
-    input_dim = inp.dimshuffle(0, 2, 3, 1)
-    input_transformed = _interpolate(
-        input_dim, x_s_flat, y_s_flat,
-        out_height, out_width, border_mode)
-
-    output = T.reshape(
-        input_transformed, (num_batch, out_height, out_width, num_channels))
-    output = output.dimshuffle(0, 3, 1, 2)  # dimshuffle to conv format
-    return output
+def assert_raises(exception_classes, callable, *args):
+    try:
+        callable(*args)
+    except Exception as e:
+        if not isinstance(e, tuple(exception_classes)):
+            raise e
+    else:
+        raise AssertionError('assert_raises', exception_classes, callable.__name__, *args)
 
 
-class TestTransformer(unittest.TestCase):
+class TestTransformer(object):
+    mode = None
+    transformer_grid_op = TransformerGrid
+    transformer_sampler_op = TransformerSampler
+    transformer_grad_i_op = TransformerGradI
+    transformer_grad_t_op = TransformerGradT
+
+    some_transformations = [
+        [[1, 0, 0],
+         [0, 1, 0]],
+        [[-1, 0, 0],
+         [0, -1, 0]],
+        [[1, 0, -1],
+         [0, 1, -1]],
+        [[1, 1, 1],
+         [1, 1, 1]],
+        [[-1.90120868, 1.48872078, -4.01530816],
+         [8.27449531, 1.75634363, 6.66776181]]
+    ]
+    symb_out_fn = None
+    impl_out_fn = None
+    inp_cases = []
+    transform_cases = []
+
+    def __init__(self):
+        utt.seed_rng()
+        t_inp = T.tensor4('inp')
+        t_theta = T.tensor3('theta')
+        t_scale_height = T.scalar('scale_height')
+        t_scale_width = T.scalar('scalar_width')
+
+        symb_out_var = theano_spatialtf(t_inp, t_theta, t_scale_width, t_scale_height)
+        cpu_out_var = spatialtf(t_inp, t_theta, t_scale_width, t_scale_height)
+        self.symb_out_fn = theano.function([t_inp, t_theta, t_scale_width, t_scale_height], symb_out_var,
+                                           mode=self.mode)
+        self.impl_out_fn = theano.function([t_inp, t_theta, t_scale_width, t_scale_height], cpu_out_var, mode=self.mode)
+
+        count_grid_ops = 0
+        count_sampler_ops = 0
+        for node in self.impl_out_fn.maker.fgraph.apply_nodes:
+            if isinstance(node.op, self.transformer_grid_op):
+                count_grid_ops += 1
+            elif isinstance(node.op, self.transformer_sampler_op):
+                count_sampler_ops += 1
+        assert count_grid_ops == 1, count_grid_ops
+        assert count_sampler_ops == 1, count_sampler_ops
+
+        cases_count = 10
+        self.inp_cases = self._get_inp_shape_cases(cases_count)
+        self.transform_cases = self._get_transform_cases(cases_count - len(self.some_transformations))
+
     def setUp(self):
         utt.seed_rng()
 
-    def getInputs(self):
-        inp_shape = (np.random.randint(1, 11), 3, np.random.randint(10, 101),
-                     np.random.randint(10, 101))
-        num_images, num_channels, height, width = inp_shape
+    def _get_inp_shape_cases(self, count):
+        return [self._generate_inp_shape() for i in range(count)]
 
+    def _get_transform_cases(self, count):
+        return [np.asarray(t) for t in self.some_transformations] + [self._generate_transformation() for i in
+                                                                     range(count)]
+
+    def _generate_inp_shape(self):
+        return (
+            np.random.randint(1, 11), np.random.randint(1, 6), np.random.randint(10, 101), np.random.randint(10, 101))
+
+    def _generate_transformation(self):
+        return np.random.uniform(-10, 10, (2, 3)).astype(theano.config.floatX)
+
+    def getInputs(self, inp_shape, transform):
         inp = np.random.random(inp_shape).astype(config.floatX)
-
-        transform = [[-1, 0, 0],
-                     [0, -1, 0]]
-        theta = np.asarray(num_images * [transform], dtype=config.floatX)
+        theta = np.asarray(inp_shape[0] * [transform], dtype=config.floatX)
         scale_height = np.random.random()
         scale_width = np.random.random()
-
         return (inp, theta, scale_width, scale_height)
 
-    def test_symb(self):
-        """
-        Compare CPU implementation with a symbolic one
-        """
-        inp, theta, scale_width, scale_height = self.getInputs()
+    def compare_implementations_numpy_theano(self, case_index):
+        # Compare CPU implementation with symbolic implementation.
+        inp_shape = self.inp_cases[case_index]
+        transform = self.transform_cases[case_index]
+        inp, theta, scale_width, scale_height = self.getInputs(inp_shape, transform)
 
-        # Setup symbolic variables
-        t_inp = T.tensor4('inp')
-        t_theta = T.tensor3('theta')
-        t_scale_height = T.scalar('scale_height')
-        t_scale_width = T.scalar('scalar_width')
+        symb_out = self.symb_out_fn(inp, theta, scale_width, scale_height)
+        cpu_out = self.impl_out_fn(inp, theta, scale_width, scale_height)
 
-        symb_out_op = spatialtf_symb(t_inp, t_theta, t_scale_width, t_scale_height)
-        symb_out_fn = theano.function([t_inp, t_theta, t_scale_width, t_scale_height],
-                                      symb_out_op, mode=mode_without_gpu)
-        symb_out = symb_out_fn(inp, theta, scale_width, scale_height)
+        rtol = None
+        atol = rtol
 
-        cpu_out_op = spatialtf(t_inp, t_theta, t_scale_width, t_scale_height)
-        cpu_out_fn = theano.function([t_inp, t_theta, t_scale_width, t_scale_height],
-                                     cpu_out_op, mode=mode_without_gpu)
-        cpu_out = cpu_out_fn(inp, theta, scale_width, scale_height)
+        try:
+            utt.assert_allclose(cpu_out, symb_out, atol=atol, rtol=rtol)
+        except Exception as e:
+            print('Failing case:')
+            print('Input shape:', inp_shape)
+            print('Transform:')
+            print(transform)
+            raise e
 
-        # Check if results are approx. equal
-        utt.assert_allclose(symb_out, cpu_out)
+    def test_symbolic_implementation(self):
+        for test_case_index in range(len(self.inp_cases)):
+            yield (self.compare_implementations_numpy_theano, test_case_index)
 
-    def test_gpu(self):
-        inp, theta, scale_width, scale_height = self.getInputs()
-        # Setup symbolic variables
-        t_inp = T.tensor4('inp')
-        t_theta = T.tensor3('theta')
-        t_scale_height = T.scalar('scale_height')
-        t_scale_width = T.scalar('scalar_width')
-        # Setup spatial transformer on the GPU using cuDNN
-        op_gpu = dnn_spatialtf(t_inp, t_theta, t_scale_width, t_scale_height)
-        fn_gpu = theano.function([t_inp, t_theta, t_scale_width, t_scale_height],
-                                 op_gpu, mode=mode_with_gpu)
-        # Evaluate GPU function
-        out_gpu = fn_gpu(inp, theta, scale_width, scale_height)
-        out_gpu = np.asarray(out_gpu)
-
-        for border_mode in ('nearest', 'mirror', 'wrap'):
-            # Setup spatial transformer on the CPU
-            op_cpu = spatialtf(t_inp, t_theta, t_scale_width, t_scale_height, border_mode)
-            fn_cpu = theano.function([t_inp, t_theta, t_scale_width, t_scale_height],
-                                     op_cpu, mode=mode_without_gpu)
-            # Evaluate CPU function
-            out_cpu = fn_cpu(inp, theta, scale_width, scale_height)
-
-            # Check results
-            utt.assert_allclose(out_gpu, out_cpu)
-
-    def test_gradi(self):
-        inp, theta, scale_width, scale_height = self.getInputs()
+    def test_grad_input(self):
+        inp, theta, scale_width, scale_height = self.getInputs((3, 3, 5, 5), self._generate_transformation())
 
         def grad_inp_functor(inputs):
             out = spatialtf(inputs, theta, scale_width, scale_height)
             return out
 
-        # Check results
-        utt.verify_grad(grad_inp_functor, [inp])
+        utt.verify_grad(grad_inp_functor, [inp], n_tests=10, mode=self.mode)
+
+    def test_grad_theta(self):
+        inp, theta_val, scale_width, scale_height = self.getInputs((3, 3, 5, 5), self._generate_transformation())
+
+        def grad_theta_functor(theta):
+            out = spatialtf(inp, theta, scale_width, scale_height)
+            return out
+
+        utt.verify_grad(grad_theta_functor, [theta_val], n_tests=10, mode=self.mode)
+
+    def test_grad_grid(self):
+        inp, theta_val, scale_width, scale_height = self.getInputs((3, 3, 5, 5), self._generate_transformation())
+        out_dims = [int(v) for v in (inp.shape[0], inp.shape[1],
+                                     np.ceil(inp.shape[2] * scale_height),
+                                     np.ceil(inp.shape[3] * scale_width))]
+        inp = theano.shared(inp)
+        theta_val = theano.shared(theta_val)
+        grid_var = self.transformer_grid_op()(theta_val, out_dims)
+        fn_grid = theano.function([], grid_var, mode=self.mode)
+        grid_val = fn_grid()
+
+        def grad_grid_functor(grid):
+            out = self.transformer_sampler_op()(inp, grid)
+            return out
+
+        utt.verify_grad(grad_grid_functor, [grid_val], n_tests=10, mode=self.mode)
+
+    def test_grad(self):
+        utt.seed_rng()
+
+        inputs = T.tensor4('inputs')
+        theta = T.tensor3('theta')
+
+        out = spatialtf(inputs, theta, scale_height=0.25, scale_width=0.75)
+        out_mean = T.mean(out)
+        mean_gi = T.grad(out_mean, [inputs])
+        mean_gt = T.grad(out_mean, [theta])
+
+        f_gi = theano.function([inputs, theta], mean_gi, mode=self.mode)
+        assert any([isinstance(node.op, self.transformer_grad_i_op)
+                    for node in f_gi.maker.fgraph.apply_nodes])
+
+        f_gt = theano.function([inputs, theta], mean_gt, mode=self.mode)
+        assert any([isinstance(node.op, self.transformer_grad_t_op)
+                    for node in f_gt.maker.fgraph.apply_nodes])
+
+        input_dims = (5, 3, 16, 16)
+        inputs_val = np.random.random(size=input_dims).astype(theano.config.floatX)
+        inputs_val = np.ones(input_dims)
+
+        # Tensor with transformations
+        theta_val = np.random.random((input_dims[0], 2, 3)).astype(theano.config.floatX)
+        theta_val = np.ones((input_dims[0], 2, 3))
+        # Using smaller values for theta, increases the precision of gradients
+        # when using lower precision. Tests might fail for lower precision data
+        # types if the values of theta or the inputs are very high.
+        # theta /= 100
+
+        # Check that the gradients are computed
+        f_gi(inputs_val, theta_val)
+        f_gt(inputs_val, theta_val)
+
+        def grad_functor(inputs, theta):
+            out = spatialtf(inputs, theta)
+            return out
+
+        atol, rtol = None, None
+        # if theano.config.floatX == 'float32':
+        #     rtol = 5e-2
+        # elif theano.config.floatX == 'float16':
+        #     rtol = 1e-0
+
+        # TODO: currently fails, even in float64.
+        utt.verify_grad(grad_functor, [inputs_val, theta_val], abs_tol=atol, rel_tol=rtol, mode=self.mode)
+
+    def test_invalid_shapes(self):
+        inputs = T.tensor4('inputs')
+        theta = T.tensor3('theta')
+
+        st = spatialtf(inputs, theta)
+        st_func = theano.function([inputs, theta], st, mode=self.mode)
+
+        inputs_val = np.ones((3, 5, 7, 7), dtype=theano.config.floatX)
+
+        def try_theta_shp(theta_shp):
+            theta_val = np.ones(theta_shp, dtype=theano.config.floatX)
+            return st_func(inputs_val, theta_val)
+
+        # the theta shape for this input should be (3, 2, 3)
+        try_theta_shp((3, 2, 3))
+
+        # incorrect parameter dimensions
+        assert_raises([ValueError, RuntimeError], try_theta_shp, (3, 1, 3))
+        assert_raises([ValueError, RuntimeError], try_theta_shp, (3, 2, 1))
+
+        # number of rows does not match the number of input rows
+        assert_raises([ValueError, RuntimeError], try_theta_shp, (1, 2, 3))
+        assert_raises([ValueError, RuntimeError], try_theta_shp, (4, 2, 3))

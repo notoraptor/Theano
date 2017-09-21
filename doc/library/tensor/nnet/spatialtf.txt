@@ -6,7 +6,8 @@
 
 .. note::
 
-    Currently, only bilinear interpolation is implemented as the sampling method.
+    - Currently, only 2D inputs are supported
+    - Currently, only bilinear interpolation is implemented as the sampling method.
 
 .. note::
 
@@ -15,7 +16,7 @@
 
 .. module:: theano.tensor.nnet.spatialtf
    :platform: Unix, Windows
-   :synopsis: Spatial transformer (by Jaderberg et. al)
+   :synopsis: Spatial transformer (by `Jaderberg et. al <http://arxiv.org/abs/1506.02025>`)
 .. moduleauthor:: `João Victor Risso <https://github.com/joaovictortr>`_
 
 .. autofunction:: theano.tensor.nnet.spatialtf.spatialtf
