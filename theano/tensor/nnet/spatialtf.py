@@ -11,7 +11,35 @@ from theano.tensor import as_tensor_variable
 from theano.tensor.extra_ops import cpu_contiguous
 from theano.gof import Apply
 from theano.gradient import grad_not_implemented
+from itertools import product, izip
 import numpy as np
+
+
+def matmul(a, b):
+    # To support older NumPy versions.
+    # May be better implemented.
+    assert a.ndim == b.ndim >= 2
+    if a.ndim == 2:
+        return np.dot(a, b)
+    common_dtype = np.find_common_type([a.dtype, b.dtype], [])
+    out = np.empty(a.shape[:-1] + b.shape[-1:], common_dtype)
+    for i in range(a.ndim - 2):
+        assert a.shape[i] == b.shape[i] or b.shape[i] == 1
+    assert a.shape[-1] == b.shape[-2]
+    coordinates_a = []
+    coordinates_b = []
+    for i in range(a.ndim - 2):
+        coordinates = list(range(a.shape[i]))
+        coordinates_a += [coordinates]
+        if b.shape[i] == 1:
+            coordinates_b += [a.shape[i] * [0]]
+        else:
+            coordinates_b += [coordinates]
+    positions_a = product(*coordinates_a)
+    positions_b = product(*coordinates_b)
+    for a_pos, b_pos in izip(positions_a, positions_b):
+        out[a_pos] = np.dot(a[a_pos], b[b_pos])
+    return out
 
 
 def sampling_grid(height, width):
@@ -203,13 +231,13 @@ class TransformerSampler(Op):
         # num_batch, Q, N, then num_batch, Q, N, 1 ( all y -n for every y in grid and every n in [0, n) )
         all_kyn = k(np.dot(all_y, N1)).reshape(num_batch, Q, N, 1)
         # num_batch, Q, N, M ( all (x - m)(y - n) )
-        all_kyx = np.matmul(all_kyn, all_kxm)
+        all_kyx = matmul(all_kyn, all_kxm)
         # num_batch, Q, N*M
         b_q_nm = all_kyx.reshape(num_batch, Q, N * M)
         # num_batch, N*M, C
         b_nm_c = inp.reshape(num_batch, num_channels, N * M).transpose(0, 2, 1)
         # num_batch, Q, C ( sum{ img[n, m] * (x - m) * (y - n) } in every channel for each output point (x, y) )
-        b_q_c = np.matmul(b_q_nm, b_nm_c)
+        b_q_c = matmul(b_q_nm, b_nm_c)
         # num_batch, num_channels, out_height, out_width
         out = b_q_c.transpose(0, 2, 1).reshape(num_batch, num_channels, out_height, out_width)
 
@@ -285,12 +313,12 @@ class TransformerGradI(Op):
         # num_batch, Q, N, then num_batch, Q, N, 1 ( all y -n for every y in grid and every n in [0, n) )
         all_kyn = k(np.dot(all_y, N1)).reshape(num_batch, Q, N, 1)
         # num_batch, Q, N, M ( all (x - m)(y - n) )
-        all_kyx = np.matmul(all_kyn, all_kxm)
+        all_kyx = matmul(all_kyn, all_kxm)
 
         # Let's compute grad input
         b_nm_q = all_kyx.reshape(num_batch, Q, N * M).transpose(0, 2, 1)
         b_q_c = grad_outputs.reshape(num_batch, num_channels, Q).transpose(0, 2, 1)
-        b_nm_c = np.matmul(b_nm_q, b_q_c)
+        b_nm_c = matmul(b_nm_q, b_q_c)
         grad_inp_out[0] = b_nm_c.transpose(0, 2, 1).reshape(num_batch, num_channels, N, M)
 
         # Let's compute grad grid (currently failing ...)
@@ -310,18 +338,18 @@ class TransformerGradI(Op):
         y_less_n = np.dot(all_y, N1)
         yn_for_grad_y = gradient_k(y_less_n).reshape(num_batch, Q, N, 1)
         # grad grid
-        kyx_for_grad_x = np.matmul(all_kyn, xm_for_grad_x).reshape(num_batch, Q, 1, N * M)
-        kyx_for_grad_y = np.matmul(yn_for_grad_y, all_kxm).reshape(num_batch, Q, 1, N * M)
+        kyx_for_grad_x = matmul(all_kyn, xm_for_grad_x).reshape(num_batch, Q, 1, N * M)
+        kyx_for_grad_y = matmul(yn_for_grad_y, all_kxm).reshape(num_batch, Q, 1, N * M)
         # num_batch, Q, 2, N * M
         kyx_for_grad = np.concatenate((kyx_for_grad_x, kyx_for_grad_y), axis=2)
         # num_batch, 1, N*M, C
         img_reshaped = inp.reshape(num_batch, 1, num_channels, N * M).transpose(0, 1, 3, 2)
         # num_batch, Q, 2, C (is the error here ?)
-        grad_grid = np.matmul(kyx_for_grad, img_reshaped)
+        grad_grid = matmul(kyx_for_grad, img_reshaped)
         b_q_c_1 = grad_outputs.reshape(num_batch, num_channels, Q).transpose(0, 2, 1).reshape(num_batch, Q,
                                                                                               num_channels, 1)
         # num_batch, Q, 2, 1 => num_batch, H, W, 2
-        grad_grid_weighted = np.matmul(grad_grid, b_q_c_1).reshape(num_batch, out_height, out_width, 2)
+        grad_grid_weighted = matmul(grad_grid, b_q_c_1).reshape(num_batch, out_height, out_width, 2)
         grad_grid_out[0] = grad_grid_weighted
 
 
