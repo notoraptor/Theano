@@ -11,7 +11,7 @@ from theano.tensor import as_tensor_variable
 from theano.tensor.extra_ops import cpu_contiguous
 from theano.gof import Apply
 from theano.gradient import grad_not_implemented
-from itertools import product, izip
+from itertools import product
 import numpy as np
 
 
@@ -28,6 +28,7 @@ def matmul(a, b):
     assert a.shape[-1] == b.shape[-2]
     coordinates_a = []
     coordinates_b = []
+    count_positions = 1
     for i in range(a.ndim - 2):
         coordinates = list(range(a.shape[i]))
         coordinates_a += [coordinates]
@@ -35,9 +36,12 @@ def matmul(a, b):
             coordinates_b += [a.shape[i] * [0]]
         else:
             coordinates_b += [coordinates]
+        count_positions *= a.shape[i]
     positions_a = product(*coordinates_a)
     positions_b = product(*coordinates_b)
-    for a_pos, b_pos in izip(positions_a, positions_b):
+    for i in range(count_positions):
+        a_pos = next(positions_a)
+        b_pos = next(positions_b)
         out[a_pos] = np.dot(a[a_pos], b[b_pos])
     return out
 
