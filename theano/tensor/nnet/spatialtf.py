@@ -14,45 +14,51 @@ from theano.gradient import grad_not_implemented
 from itertools import product
 import numpy as np
 
+numpy_version = tuple(int(x) for x in np.version.short_version.split('.'))
+if numpy_version >= (1, 10, 0):
+    matmul = np.matmul
+else:
+    def matmul(a, b):
+        # To support older NumPy versions.
+        # May be better implemented.
+        assert a.ndim == b.ndim >= 2
+        if a.ndim == 2:
+            return np.dot(a, b)
+        common_dtype = np.find_common_type([a.dtype, b.dtype], [])
+        out = np.empty(a.shape[:-1] + b.shape[-1:], common_dtype)
+        for i in range(a.ndim - 2):
+            assert a.shape[i] == b.shape[i] or b.shape[i] == 1
+        assert a.shape[-1] == b.shape[-2]
+        coordinates_a = []
+        coordinates_b = []
+        count_positions = 1
+        for i in range(a.ndim - 2):
+            coordinates = list(range(a.shape[i]))
+            coordinates_a += [coordinates]
+            if b.shape[i] == 1:
+                coordinates_b += [a.shape[i] * [0]]
+            else:
+                coordinates_b += [coordinates]
+            count_positions *= a.shape[i]
+        positions_a = product(*coordinates_a)
+        positions_b = product(*coordinates_b)
+        for i in range(count_positions):
+            a_pos = next(positions_a)
+            b_pos = next(positions_b)
+            out[a_pos] = np.dot(a[a_pos], b[b_pos])
+        return out
 
-def matmul(a, b):
-    # To support older NumPy versions.
-    # May be better implemented.
-    assert a.ndim == b.ndim >= 2
-    if a.ndim == 2:
-        return np.dot(a, b)
-    common_dtype = np.find_common_type([a.dtype, b.dtype], [])
-    out = np.empty(a.shape[:-1] + b.shape[-1:], common_dtype)
-    for i in range(a.ndim - 2):
-        assert a.shape[i] == b.shape[i] or b.shape[i] == 1
-    assert a.shape[-1] == b.shape[-2]
-    coordinates_a = []
-    coordinates_b = []
-    count_positions = 1
-    for i in range(a.ndim - 2):
-        coordinates = list(range(a.shape[i]))
-        coordinates_a += [coordinates]
-        if b.shape[i] == 1:
-            coordinates_b += [a.shape[i] * [0]]
-        else:
-            coordinates_b += [coordinates]
-        count_positions *= a.shape[i]
-    positions_a = product(*coordinates_a)
-    positions_b = product(*coordinates_b)
-    for i in range(count_positions):
-        a_pos = next(positions_a)
-        b_pos = next(positions_b)
-        out[a_pos] = np.dot(a[a_pos], b[b_pos])
-    return out
+
+required_dtypes = ('float16', 'float32', 'float64')
 
 
-def sampling_grid(height, width):
+def sampling_grid(height, width, dtype):
     """
     Create sampling grid.
     """
-    x_t, y_t = np.meshgrid(np.linspace(-1, 1, width),
-                           np.linspace(-1, 1, height))
-    ones = np.ones(np.prod(x_t.shape))
+    x_t, y_t = np.meshgrid(np.linspace(-1, 1, width, dtype=dtype),
+                           np.linspace(-1, 1, height, dtype=dtype))
+    ones = np.ones(np.prod(x_t.shape), dtype=dtype)
     grid = np.vstack([x_t.flatten(), y_t.flatten(), ones])
     return grid
 
@@ -137,7 +143,7 @@ class TransformerGrid(Op):
         grid_out = output_storage[0]
 
         out_height, out_width = out_dims[2:]
-        grid = sampling_grid(out_height, out_width)
+        grid = sampling_grid(out_height, out_width, theta.dtype)
         # Generate transformed grid with shape (num_batch, 2, out_height * out_width)
         transformed_grid = np.dot(theta, grid)
         # Reshape into (num_batch, out_height, out_width, 2)
@@ -210,7 +216,6 @@ class TransformerSampler(Op):
         num_batch, num_channels, N, M = inp.shape
         assert num_batch == grid.shape[0]
         assert grid.shape[3] == 2
-
         # Q is the number of output points.
         Q = out_height * out_width
 
@@ -271,12 +276,15 @@ class TransformerGradI(Op):
         """
         inp = cpu_contiguous(as_tensor_variable(inp))
         assert inp.ndim == 4
+        assert inp.dtype in required_dtypes
 
         grid = cpu_contiguous(as_tensor_variable(grid))
         assert grid.ndim == 4
+        assert grid.dtype in required_dtypes
 
         grad_outputs = cpu_contiguous(as_tensor_variable(grad_outputs))
         assert grad_outputs.ndim == 4
+        assert grad_outputs.dtype in required_dtypes
 
         grad_inp = inp.type()
 
@@ -333,7 +341,7 @@ class TransformerGradI(Op):
             v1_neg = -np.logical_and(val > 0, val < 1).astype(np.int8)
             v_grad = np.add(v1_pos, v1_neg)
             # Note: we will have 0 everywhere |val| >= 1.
-            return v_grad
+            return v_grad.astype(val.dtype)
 
         # num_batch, Q, 1, M
         x_less_m = np.dot(all_x, M1)
@@ -379,9 +387,11 @@ class TransformerGradT(Op):
         """
         theta = as_tensor_variable(theta)
         assert theta.ndim == 3
+        assert theta.dtype in required_dtypes
 
         grad_grid = as_tensor_variable(grad_grid)
         assert grad_grid.ndim == 4
+        assert grad_grid.dtype in required_dtypes
 
         out = theano.tensor.tensor(dtype=theta.type.dtype,
                                    broadcastable=theta.broadcastable)
@@ -398,7 +408,7 @@ class TransformerGradT(Op):
         out_height, out_width = grad_grid.shape[1], grad_grid.shape[2]
         assert grad_grid.shape[3] == 2
 
-        grid = sampling_grid(out_height, out_width)
+        grid = sampling_grid(out_height, out_width, theta.dtype)
         # (3, h * w) -> (h * w, 3)
         transposed_grid = grid.transpose(1, 0)
         # reshape gradients of grid from (n, h, w, 2) -> (n, h * w, 2) -> (n, 2, h * w)

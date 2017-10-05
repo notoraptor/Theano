@@ -4,19 +4,19 @@ import theano.tensor as T
 from theano.scalar import as_scalar
 
 
-def theano_linspace(start, stop, num):
+def theano_linspace(start, stop, num, dtype):
     # Theano linspace. Behaves similar to np.linspace
-    start = T.cast(start, theano.config.floatX)
-    stop = T.cast(stop, theano.config.floatX)
-    num = T.cast(num, theano.config.floatX)
+    start = T.cast(start, dtype)
+    stop = T.cast(stop, dtype)
+    num = T.cast(num, dtype)
     # if num is 1, we set step to 0 as it does not matter. Else we compute step.
     step = theano.ifelse.ifelse(theano.tensor.eq(num, 1),
-                                T.cast(0, theano.config.floatX),
+                                T.cast(0, dtype),
                                 (stop - start) / (num - 1))
-    return T.arange(num, dtype=theano.config.floatX) * step + start
+    return T.arange(num, dtype=dtype) * step + start
 
 
-def theano_spatialtf_sampling_grid(height, width):
+def theano_spatialtf_sampling_grid(height, width, dtype):
     # Grid generator.
     # It is equivalent to the following numpy code:
     #  x_t, y_t = np.meshgrid(np.linspace(-1, 1, width),
@@ -26,10 +26,10 @@ def theano_spatialtf_sampling_grid(height, width):
 
     # Returns a tensor with shape (3, height * width)
 
-    x_t = T.dot(T.ones((height, 1)),
-                theano_linspace(-1.0, 1.0, width).dimshuffle('x', 0))
-    y_t = T.dot(theano_linspace(-1.0, 1.0, height).dimshuffle(0, 'x'),
-                T.ones((1, width)))
+    x_t = T.dot(T.ones((height, 1), dtype),
+                theano_linspace(-1.0, 1.0, width, dtype).dimshuffle('x', 0))
+    y_t = T.dot(theano_linspace(-1.0, 1.0, height, dtype).dimshuffle(0, 'x'),
+                T.ones((1, width), dtype))
 
     x_t_flat = x_t.reshape((1, -1))
     y_t_flat = y_t.reshape((1, -1))
@@ -67,7 +67,7 @@ def theano_spatialtf_grid(theta, out_dims):
     # Generate grid.
     out_height = T.cast(out_dims[2], 'int64')
     out_width = T.cast(out_dims[3], 'int64')
-    mesh_grid = theano_spatialtf_sampling_grid(out_height, out_width)
+    mesh_grid = theano_spatialtf_sampling_grid(out_height, out_width, theta.dtype)
     # theta has shape (B, 2, 3)
     # mesh_grid has shape (3, H*W)
     # Product has shape (B, 2, H*W).
@@ -126,6 +126,7 @@ def theano_spatialtf(inp, theta, scale_width=1, scale_height=1):
     Jaderberg et. al: http://arxiv.org/abs/1506.02025
     """
     inp = T.as_tensor_variable(inp)
+    theta = T.as_tensor_variable(theta)
     scale_width = as_scalar(scale_width)
     scale_height = as_scalar(scale_height)
     num_batch, num_channels, height, width = inp.shape
