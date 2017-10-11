@@ -1651,9 +1651,10 @@ class Maximum(BinaryScalarOp):
             return [x.zeros_like().astype(theano.config.floatX),
                     y.zeros_like().astype(theano.config.floatX)]
 
-        gx = eq(outputs[0], x) * gz
-        gy = eq(outputs[0], y) * gz
-        return (gx, gy)
+        half = 0.5 * eq(x, y) * gz
+        gx = gt(x, y) * gz
+        gy = gt(y, x) * gz
+        return (gx + half, gy + half)
 
 maximum = Maximum(upcast_out, name='maximum')
 

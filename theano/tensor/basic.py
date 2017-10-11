@@ -5973,6 +5973,7 @@ class Dot(Op):
 
         # x is matrix, y is matrix, grad is matrix
         elif xdim == ydim == 2:
+            print('we pass here')
             xgrad = dot(gz, y.T)
             ygrad = dot(x.T, gz)
 

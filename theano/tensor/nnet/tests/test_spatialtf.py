@@ -22,7 +22,7 @@ def assert_raises(exception_classes, callable, *args):
 
 
 valid_gradients = DOUT_DINPUT, DOUT_DTHETA, DOUT_DGRID, DGRID_DTHETA = (
-'out_input', 'out_theta', 'out_grid', 'grid_theta')
+    'out_input', 'out_theta', 'out_grid', 'grid_theta')
 
 symbolic_functions = {}
 
@@ -34,7 +34,6 @@ def get_symb_and_cpu_functions(mode):
     global symbolic_functions
     fn_key = (mode, None)
     if fn_key in symbolic_functions:
-        print('we use this')
         return symbolic_functions[fn_key]
 
     t_inp = T.tensor4('inp')
@@ -57,7 +56,6 @@ def get_symb_and_cpu_grad_functions(mode, for_grad, grid_op, sampler_op):
     global symbolic_functions
     fn_key = (mode, for_grad)
     if fn_key in symbolic_functions:
-        print('we use this too')
         return symbolic_functions[fn_key]
 
     assert for_grad in valid_gradients
@@ -119,6 +117,7 @@ def get_symb_and_cpu_grad_functions(mode, for_grad, grid_op, sampler_op):
 
 class TestTransformer(object):
     mode = None
+    n_tests = 10
     transformer_grid_op = TransformerGrid
     transformer_sampler_op = TransformerSampler
     transformer_grad_i_op = TransformerGradI
@@ -136,7 +135,7 @@ class TestTransformer(object):
         [[-1.90120868, 1.48872078, -4.01530816],
          [8.27449531, 1.75634363, 6.66776181]]
     ]
-    cases_count = 10
+    cases_count = 20
     inp_cases = []
     transform_cases = []
 
@@ -193,6 +192,11 @@ class TestTransformer(object):
         scale_width = np.random.random()
         return (inp, theta, scale_width, scale_height)
 
+    def get_out_dims(self, inp_shape, scale_width, scale_height):
+        return tuple(int(v) for v in (inp_shape[0], inp_shape[1],
+                                      np.ceil(inp_shape[2] * scale_height),
+                                      np.ceil(inp_shape[3] * scale_width)))
+
     def compare_symbolic_vs_numpy(self, case_index, for_grad=None):
         # Compare CPU implementation with symbolic implementation.
         inp_shape = self.inp_cases[case_index]
@@ -213,89 +217,127 @@ class TestTransformer(object):
         try:
             utt.assert_allclose(cpu_out, symb_out)
         except Exception as e:
-            print('Failing case %d (grad: %s):' % (case_index, for_grad))
-            print('Input shape:', inp_shape)
-            print('Transform:')
-            print(transform)
-            raise e
+            more_exception_infos = """
+Failing case %d (grad: %s):
+Input shape: %s
+Transform: %s
+""" % (case_index, for_grad, str(inp_shape), str(transform.flatten()))
+            raise Exception(more_exception_infos + str(e))
 
-    def compare_symbolic_vs_numpy_grad_theta(self, case_index):
+    def compare_symbolic_vs_numpy_grad_dout_dtheta(self, case_index):
         self.compare_symbolic_vs_numpy(case_index, DOUT_DTHETA)
 
-    def compare_symbolic_vs_numpy_grad_input(self, case_index):
+    def compare_symbolic_vs_numpy_grad_dout_dinput(self, case_index):
         self.compare_symbolic_vs_numpy(case_index, DOUT_DINPUT)
 
-    def compare_symbolic_vs_numpy_grad_grid(self, case_index):
+    def compare_symbolic_vs_numpy_grad_dout_dgrid(self, case_index):
         self.compare_symbolic_vs_numpy(case_index, DOUT_DGRID)
 
-    def compare_symbolic_vs_numpy_grad_theta_grid(self, case_index):
+    def compare_symbolic_vs_numpy_grad_dgrid_dtheta(self, case_index):
         self.compare_symbolic_vs_numpy(case_index, DGRID_DTHETA)
 
-    def test_symbolic_grad_theta(self):
+    def test_symbolic_vs_numpy_grad_dout_dtheta(self):
         for test_case_index in range(len(self.inp_cases)):
-            yield (self.compare_symbolic_vs_numpy_grad_theta, test_case_index)
+            yield (self.compare_symbolic_vs_numpy_grad_dout_dtheta, test_case_index)
 
-    def test_symbolic_grad_input(self):
+    def test_symbolic_vs_numpy_grad_dout_dinput(self):
         for test_case_index in range(len(self.inp_cases)):
-            yield (self.compare_symbolic_vs_numpy_grad_input, test_case_index)
+            yield (self.compare_symbolic_vs_numpy_grad_dout_dinput, test_case_index)
 
-    def test_symbolic_grad_grid(self):
+    def test_symbolic_vs_numpy_grad_dout_dgrid(self):
         for test_case_index in range(len(self.inp_cases)):
-            yield (self.compare_symbolic_vs_numpy_grad_grid, test_case_index)
+            yield (self.compare_symbolic_vs_numpy_grad_dout_dgrid, test_case_index)
 
-    def test_symbolic_grad_theta_grid(self):
+    def test_symbolic_vs_numpy_grad_dgrid_dtheta(self):
         for test_case_index in range(len(self.inp_cases)):
-            yield (self.compare_symbolic_vs_numpy_grad_theta_grid, test_case_index)
+            yield (self.compare_symbolic_vs_numpy_grad_dgrid_dtheta, test_case_index)
 
-    def test_symbolic_implementation(self):
+    def test_symbolic_vs_numpy(self):
         for test_case_index in range(len(self.inp_cases)):
             yield (self.compare_symbolic_vs_numpy, test_case_index)
 
-    def test_grad_input(self):
-        inp, theta, scale_width, scale_height = self.getInputs((3, 3, 5, 5), self._generate_transformation())
+    def test_grad_dout_dinput(self):
+        inp_val, theta_val, scale_width, scale_height = self.getInputs((3, 3, 5, 5), self._generate_transformation())
 
-        def grad_inp_functor(inputs):
-            out = spatialtf(inputs, theta, scale_width, scale_height)
+        def grad_inp_functor(inp):
+            out = spatialtf(inp, theta_val, scale_width, scale_height)
             return out
 
-        utt.verify_grad(grad_inp_functor, [inp], n_tests=5, mode=self.mode)
+        utt.verify_grad(grad_inp_functor, [inp_val], n_tests=self.n_tests, mode=self.mode)
 
-    def test_grad_theta(self):
-        inp, theta_val, scale_width, scale_height = self.getInputs((3, 3, 5, 5), self._generate_transformation())
+    def test_grad_dout_dtheta(self):
+        inp_val, theta_val, scale_width, scale_height = self.getInputs((3, 3, 5, 5), [[1, 0, 0], [0, 1, 0]])
 
         def grad_theta_functor(theta):
-            out = spatialtf(inp, theta, scale_width, scale_height)
+            out = spatialtf(inp_val, theta, scale_width, scale_height)
             return out
 
-        utt.verify_grad(grad_theta_functor, [theta_val], n_tests=5, mode=self.mode)
+        utt.verify_grad(grad_theta_functor, [theta_val], n_tests=self.n_tests, mode=self.mode)
 
-    def test_grad_theta_grid(self):
-        inp, theta_val, scale_width, scale_height = self.getInputs((3, 3, 5, 5), self._generate_transformation())
-
-        out_dims = (
-            inp.shape[0], inp.shape[1], np.ceil(inp.shape[2] * scale_height), np.ceil(inp.shape[3] * scale_width))
-        out_dims = tuple(int(v) for v in out_dims)
+    def test_grad_dgrid_dtheta(self):
+        inp_val, theta_val, scale_width, scale_height = self.getInputs((3, 3, 5, 5), self._generate_transformation())
 
         def grad_theta_for_grid_functor(theta):
-            grid = self.transformer_grid_op()(theta, out_dims)
+            grid = self.transformer_grid_op()(theta, self.get_out_dims(inp_val.shape, scale_width, scale_height))
             return grid
 
-        utt.verify_grad(grad_theta_for_grid_functor, [theta_val], n_tests=5, mode=self.mode)
+        utt.verify_grad(grad_theta_for_grid_functor, [theta_val], n_tests=self.n_tests, mode=self.mode)
 
-    def test_grad_grid(self):
-        inp, theta_val, scale_width, scale_height = self.getInputs((1, 2, 3, 3), self._generate_transformation())
+    def test_grad_dout_dgrid(self):
+        inp_val, theta_val, scale_width, scale_height= self.getInputs((1, 2, 3, 3), self._generate_transformation())
 
         def grad_grid_functor(grid):
-            out = self.transformer_sampler_op()(inp, grid)
+            out = self.transformer_sampler_op()(inp_val, grid)
             return out
 
-        out_dims = (
-            inp.shape[0], inp.shape[1], np.ceil(inp.shape[2] * scale_height), np.ceil(inp.shape[3] * scale_width))
-        out_dims = tuple(int(v) for v in out_dims)
-        grid_var = self.transformer_grid_op()(theta_val, out_dims)
+        # Compute grid value.
+        grid_var = self.transformer_grid_op()(theta_val, self.get_out_dims(inp_val.shape, scale_width, scale_height))
         fn_grid = theano.function([], grid_var, mode=self.mode)
         grid_val = fn_grid()
-        utt.verify_grad(grad_grid_functor, [grid_val], n_tests=5, mode=self.mode)
+        # Now use grid value to verify gradient.
+        utt.verify_grad(grad_grid_functor, [grid_val], n_tests=self.n_tests, mode=self.mode)
+
+    def test_symbolic_grad_dout_dinput(self):
+        inp_val, theta_val, scale_width, scale_height = self.getInputs((3, 3, 5, 5), self._generate_transformation())
+
+        def grad_inp_functor(inp):
+            out = theano_spatialtf(inp, theta_val, scale_width, scale_height)
+            return out
+
+        utt.verify_grad(grad_inp_functor, [inp_val], n_tests=self.n_tests, mode=self.mode)
+
+    def test_symbolic_grad_dout_dtheta(self):
+        inp_val, theta_val, scale_width, scale_height = self.getInputs((3, 3, 5, 5), [[1, 0, 0], [0, 1, 0]])
+        # theta_val += 1e-30
+
+        def grad_theta_functor(theta):
+            out = theano_spatialtf(inp_val, theta, scale_width, scale_height)
+            return out
+
+        utt.verify_grad(grad_theta_functor, [theta_val], n_tests=self.n_tests, mode=self.mode)
+
+    def test_symbolic_grad_dgrid_dtheta(self):
+        inp_val, theta_val, scale_width, scale_height = self.getInputs((3, 3, 5, 5), self._generate_transformation())
+
+        def grad_theta_for_grid_functor(theta):
+            grid = theano_spatialtf_grid(theta, self.get_out_dims(inp_val.shape, scale_width, scale_height))
+            return grid
+
+        utt.verify_grad(grad_theta_for_grid_functor, [theta_val], n_tests=self.n_tests, mode=self.mode)
+
+    def test_symbolic_grad_dout_dgrid(self):
+        inp_val, theta_val, scale_width, scale_height= self.getInputs((1, 2, 3, 3), self._generate_transformation())
+
+        def grad_grid_functor(grid):
+            out = theano_spatialtf_from_grid(inp_val, grid)
+            return out
+
+        # Compute grid value.
+        grid_var = theano_spatialtf_grid(theta_val, self.get_out_dims(inp_val.shape, scale_width, scale_height))
+        fn_grid = theano.function([], grid_var, mode=self.mode)
+        grid_val = fn_grid()
+        # Now use grid value to verify gradient.
+        utt.verify_grad(grad_grid_functor, [grid_val], n_tests=self.n_tests, mode=self.mode)
 
     def test_invalid_shapes(self):
         inputs = T.tensor4('inputs')

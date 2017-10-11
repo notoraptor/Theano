@@ -43,14 +43,14 @@ def theano_spatialtf_upscale_values(v, limit):
     Scale value v from frame [-1; 1] to frame [0; limit - 1].
     (v may be not in interval [-1; 1]).
     """
-    return ((v + 1) * (limit - 1)) / 2
+    return ((v + 1.0) * (limit - 1.0)) / 2.0
 
 
 def theano_spatialtf_bilinear_kernel(values):
     """
     Bilinear sampling kernel.
     """
-    return T.maximum(T.zeros(values.shape, values.dtype), 1 - abs(values))
+    return T.maximum(T.zeros(values.shape, values.dtype), 1.0 - abs(values))
 
 
 def theano_spatialtf_grid(theta, out_dims):
@@ -59,6 +59,11 @@ def theano_spatialtf_grid(theta, out_dims):
     """
     theta = T.as_tensor_variable(theta)
     out_dims = T.as_tensor_variable(out_dims)
+
+    assert theta.ndim == 3
+    assert theta.type.dtype in ('float16', 'float32', 'float64')
+    assert out_dims.ndim == 1
+    assert out_dims.dtype in theano.tensor.basic.integer_dtypes
 
     # TODO: # Only 2D images are currently supported.
 
@@ -79,6 +84,11 @@ def theano_spatialtf_grid(theta, out_dims):
 def theano_spatialtf_from_grid(inp, grid):
     inp = T.as_tensor_variable(inp)
     grid = T.as_tensor_variable(grid)
+
+    assert inp.ndim == 4
+    assert grid.ndim == 4
+    assert inp.dtype in ('float16', 'float32', 'float64')
+    assert grid.dtype in ('float16', 'float32', 'float64')
 
     num_batch, num_channels, height, width = inp.shape
     # TODO: assert num_batch == grid.shape[0]

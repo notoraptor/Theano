@@ -131,7 +131,7 @@ class TransformerGrid(Op):
 
         # Only 2D images are currently supported.
         if len(out_dims) != 4:
-            raise NotImplementedError('SpatialTransformerGrid currently supports only 2D data (4D tensors).')
+            raise NotImplementedError('TransformerGrid currently supports only 2D data (4D tensors).')
 
         # Theta should be in the format (batch_size, 2, 3)
         if tuple(theta.shape) != (out_dims[0], 2, 3):
@@ -147,8 +147,7 @@ class TransformerGrid(Op):
         # Generate transformed grid with shape (num_batch, 2, out_height * out_width)
         transformed_grid = np.dot(theta, grid)
         # Reshape into (num_batch, out_height, out_width, 2)
-        transposed_grid = transformed_grid.reshape(num_batch, 2, out_height, out_width).transpose(0, 2, 3, 1)
-        grid_out[0] = transposed_grid.astype(theta.dtype)
+        grid_out[0] = transformed_grid.reshape(num_batch, 2, out_height, out_width).transpose(0, 2, 3, 1)
 
     def grad(self, inputs, grads):
         theta, out_dims = inputs
@@ -324,10 +323,10 @@ class TransformerGradI(Op):
         all_kxm = k(np.dot(all_x, M1)).reshape(num_batch, Q, 1, M)
         # num_batch, Q, N, then num_batch, Q, N, 1 ( all y -n for every y in grid and every n in [0, n) )
         all_kyn = k(np.dot(all_y, N1)).reshape(num_batch, Q, N, 1)
-        # num_batch, Q, N, M ( all (x - m)(y - n) )
-        all_kyx = matmul(all_kyn, all_kxm)
 
         # Let's compute grad input
+        # num_batch, Q, N, M ( all (x - m)(y - n) )
+        all_kyx = matmul(all_kyn, all_kxm)
         b_nm_q = all_kyx.reshape(num_batch, Q, N * M).transpose(0, 2, 1)
         b_q_c = grad_outputs.reshape(num_batch, num_channels, Q).transpose(0, 2, 1)
         b_nm_c = matmul(b_nm_q, b_q_c)
@@ -403,9 +402,8 @@ class TransformerGradT(Op):
         out = output_storage[0]
 
         num_batch = theta.shape[0]
-        assert num_batch == grad_grid.shape[0]
-
         out_height, out_width = grad_grid.shape[1], grad_grid.shape[2]
+        assert num_batch == grad_grid.shape[0]
         assert grad_grid.shape[3] == 2
 
         grid = sampling_grid(out_height, out_width, theta.dtype)
@@ -453,8 +451,9 @@ def spatialtf(img, theta, scale_width=1, scale_height=1):
     are supported.
     """
     img = as_tensor_variable(img)
-
     theta = as_tensor_variable(theta)
+    scale_width = as_scalar(scale_width)
+    scale_height = as_scalar(scale_height)
 
     num_batch, num_channels, height, width = img.shape
     out_height = theano.tensor.cast(theano.tensor.ceil(scale_height * height), 'int64')
